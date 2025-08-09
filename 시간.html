@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Capital Time Finder</title>
+  <style>
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:0;background:#f7fafc;color:#0f172a}
+    .wrap{max-width:760px;margin:48px auto;padding:24px;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.08)}
+    h1{margin:0 0 8px;font-size:20px}
+    p.small{margin:0 0 16px;color:#6366f1}
+    .row{display:flex;gap:8px}
+    select{flex:1;padding:10px;border:1px solid #e6e9ee;border-radius:8px;font-size:16px}
+    button{padding:10px 14px;border-radius:8px;border:0;background:#6366f1;color:#fff;cursor:pointer}
+    .result{margin-top:16px;padding:14px;border-radius:8px;background:#f1f5f9}
+    .muted{color:#6b7280;font-size:13px}
+    .alert{color:#b91c1c}
+    .small-muted{font-size:12px;color:#6b7280;margin-top:8px}
+    footer{margin-top:16px;font-size:12px;color:#94a3b8}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>국가 선택으로 수도 시간 찾기</h1>
+    <p class="small">나라를 선택하면 해당 수도의 현재 시간을 실시간으로 보여줍니다. (데이터: REST Countries API)</p>
+
+    <div class="row">
+      <select id="countrySelect">
+        <option value="">나라를 선택하세요</option>
+        <option>Republic of Korea</option>
+        <option>United States of America</option>
+        <option>French Republic</option>
+        <option>Japan</option>
+        <option>Federative Republic of Brazil</option>
+        <option>Commonwealth of Australia</option>
+        <option>Canada</option>
+        <option>Federal Republic of Germany</option>
+        <option>United Kingdom of Great Britain and Northern Ireland</option>
+        <option>Republic of India</option>
+        <option>Italian Republic</option>
+        <option>Kingdom of Spain</option>
+        <option>People's Republic of China</option>
+        <option>Russian Federation</option>
+        <option>Republic of South Africa</option>
+        <option>Kingdom of Thailand</option>
+        <option>Republic of Indonesia</option>
+        <option>Kingdom of Saudi Arabia</option>
+        <option>United Mexican States</option>
+        <option>Swiss Confederation</option>
+      </select>
+      <button id="goBtn">찾기</button>
+    </div>
+
+    <div id="result" class="result" style="display:none">
+      <div id="capLine" style="font-weight:700;font-size:16px"></div>
+      <div id="timeLine" style="font-family:monospace;margin-top:8px;font-size:15px"></div>
+      <div id="tzLine" class="muted" style="margin-top:6px"></div>
+      <div id="note" class="small-muted"></div>
+    </div>
+
+    <div id="error" style="display:none;margin-top:12px" class="alert"></div>
+
+    <footer>구현 방식: REST Countries API에서 수도와 타임존 정보를 받아와 표시합니다.</footer>
+  </div>
+
+  <script>
+    const select = document.getElementById('countrySelect');
+    const btn = document.getElementById('goBtn');
+    const result = document.getElementById('result');
+    const capLine = document.getElementById('capLine');
+    const timeLine = document.getElementById('timeLine');
+    const tzLine = document.getElementById('tzLine');
+    const note = document.getElementById('note');
+    const errorEl = document.getElementById('error');
+    let updater = null;
+
+    function clearError(){ errorEl.style.display='none'; errorEl.textContent=''; }
+    function showError(msg){ errorEl.style.display='block'; errorEl.textContent=msg; }
+
+    async function fetchCountry(query){
+      const url = `https://restcountries.com/v3.1/name/${encodeURIComponent(query)}`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('Country not found');
+      const data = await res.json();
+      return data;
+    }
+
+    function parseUtcOffset(tzStr){
+      const m = tzStr.match(/UTC([+-])(\"\d{1,2})(?::?(\d{2}))?/);
+      if(!m) return 0;
+      const sign = m[1]==='-' ? -1 : 1;
+      const hours = parseInt(m[2]||'0',10);
+      const mins = parseInt(m[3]||'0',10);
+      return sign*(hours*60 + mins);
+    }
+
+    function formatDateForIana(date, ianaTZ){
+      try{
+        return new Intl.DateTimeFormat(undefined, { timeZone: ianaTZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
+      }catch(e){
+        return null;
+      }
+    }
+
+    function startClockFor(tz){
+      if(updater) { clearInterval(updater); updater = null; }
+      function tick(){
+        const now = new Date();
+        if(typeof tz === 'string'){
+          const formatted = formatDateForIana(now, tz);
+          timeLine.textContent = formatted || now.toISOString();
+        } else {
+          const utc = new Date(now.getTime() + now.getTimezoneOffset()*60000);
+          const local = new Date(utc.getTime() + tz.offsetMinutes*60000);
+          const hh = String(local.getHours()).padStart(2,'0');
+          const mm = String(local.getMinutes()).padStart(2,'0');
+          const ss = String(local.getSeconds()).padStart(2,'0');
+          timeLine.textContent = `${hh}:${mm}:${ss}`;
+        }
+      }
+      tick();
+      updater = setInterval(tick, 1000);
+    }
+
+    async function handleQuery(){
+      clearError();
+      const q = select.value;
+      if(!q) { showError('국가를 선택하세요.'); return; }
+      result.style.display = 'none';
+      note.textContent = '';
+      try{
+        const matches = await fetchCountry(q);
+        const country = matches[0];
+        const capitalArr = country.capital || [];
+        const capital = capitalArr[0] || '(수도 정보 없음)';
+        capLine.textContent = `${country.name.common} — 수도: ${capital}`;
+
+        const tzs = country.timezones || [];
+        if(tzs.length === 0){
+          tzLine.textContent = '타임존 정보 없음';
+          showError('이 국가의 타임존 정보를 찾을 수 없습니다.');
+          return;
+        }
+
+        const primary = tzs[0];
+        tzLine.textContent = `타임존: ${primary}`;
+
+        if(primary.includes('/')){
+          startClockFor(primary);
+          note.textContent = `IANA 타임존 '${primary}' 사용.`;
+        } else if(primary.startsWith('UTC')){
+          const offsetMin = parseUtcOffset(primary);
+          startClockFor({ offsetMinutes: offsetMin });
+          note.textContent = `UTC 오프셋 '${primary}' 사용.`;
+        } else {
+          startClockFor(primary);
+        }
+
+        result.style.display = 'block';
+      }catch(err){
+        showError('국가를 찾을 수 없습니다.');
+        console.error(err);
+      }
+    }
+
+    btn.addEventListener('click', handleQuery);
+  </script>
+</body>
+</html>
